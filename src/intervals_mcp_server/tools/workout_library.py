@@ -578,3 +578,111 @@ async def schedule_workout(
         f"Successfully scheduled workout '{workout.get('name')}' on {start_date} "
         f"(event id: {event_id})."
     )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, title="Create Library Folder or Plan"
+    )
+)
+async def create_folder(
+    name: str,
+    folder_type: str = "PLAN",
+    description: str = "",
+    athlete_id: str = "",
+    api_key: str = "",
+) -> str:
+    """Create a workout library folder or a training plan on Intervals.icu.
+
+    Args:
+        name: Folder or plan name (required)
+        folder_type: "PLAN" for a training plan (workouts placed on days) or "FOLDER" for a plain folder
+        description: Optional description
+        athlete_id: The Intervals.icu athlete ID (optional, will use ATHLETE_ID from .env if not provided)
+        api_key: The Intervals.icu API key (optional, will use API_KEY from .env if not provided)
+    """
+    athlete_id_to_use, error_msg = resolve_athlete_id(athlete_id, config.athlete_id)
+    if error_msg:
+        return error_msg
+
+    data: dict[str, Any] = {"name": name, "type": folder_type.upper()}
+    if description:
+        data["description"] = description
+
+    result = await make_intervals_request(
+        url=f"/athlete/{athlete_id_to_use}/folders",
+        api_key=api_key,
+        data=data,
+        method="POST",
+    )
+
+    if isinstance(result, dict) and "error" in result:
+        return f"Error creating folder: {result.get('message')}"
+    if not result or not isinstance(result, dict):
+        return "Error: Unexpected response when creating folder."
+
+    return json.dumps(_strip_folder(result), separators=(",", ":"))
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, title="Create Plan Workout"
+    )
+)
+async def create_plan_workout(
+    name: str,
+    workout_type: str,
+    folder_id: int,
+    day: int,
+    athlete_id: str = "",
+    api_key: str = "",
+    description: str = "",
+    workout_doc: WorkoutDoc | None = None,
+    moving_time: int = 0,
+) -> str:
+    """Create a workout inside a training plan on a specific day of the plan.
+
+    Args:
+        name: Workout name (required)
+        workout_type: Activity type, e.g. "Run", "Ride", "Swim" (required)
+        folder_id: The plan's folder ID (required). Use create_folder or get_workout_folders.
+        day: Day offset within the plan (0 = first day of the plan, 7 = same weekday of week 2)
+        athlete_id: The Intervals.icu athlete ID (optional, will use ATHLETE_ID from .env if not provided)
+        api_key: The Intervals.icu API key (optional, will use API_KEY from .env if not provided)
+        description: Workout description (optional). Used when workout_doc is not provided.
+        workout_doc: Structured steps (optional), same format as add_or_update_event.
+        moving_time: Expected total duration in seconds (optional)
+    """
+    athlete_id_to_use, error_msg = resolve_athlete_id(athlete_id, config.athlete_id)
+    if error_msg:
+        return error_msg
+
+    data: dict[str, Any] = {
+        "name": name,
+        "type": workout_type,
+        "folder_id": folder_id,
+        "day": day,
+    }
+    if workout_doc is not None:
+        data["description"] = _workout_doc_to_description(workout_doc, description)
+    elif description:
+        data["description"] = description
+    if moving_time:
+        data["moving_time"] = moving_time
+
+    result = await make_intervals_request(
+        url=f"/athlete/{athlete_id_to_use}/workouts",
+        api_key=api_key,
+        data=data,
+        method="POST",
+    )
+
+    if isinstance(result, dict) and "error" in result:
+        return f"Error creating plan workout: {result.get('message')}"
+    if not result or not isinstance(result, dict):
+        return "Error: Unexpected response when creating plan workout."
+
+    return (
+        f"Created workout id {result.get('id')} '{result.get('name')}' "
+        f"in folder {result.get('folder_id')} on day {result.get('day')}"
+    )
