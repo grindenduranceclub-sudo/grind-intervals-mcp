@@ -294,3 +294,46 @@ async def get_athlete_zones(
         return f"No zone settings found for athlete {athlete_id_to_use}."
 
     return json.dumps(zones_list, separators=(",", ":"))
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="List Coached Athletes", read_only_hint=True, destructive_hint=False
+    )
+)
+async def list_coached_athletes(api_key: str = "") -> str:
+    """
+    List the athletes that follow the API key owner as coach on Intervals.icu
+    (including the coach's own account), with their athlete IDs and names.
+
+    Use this to find the athlete_id needed by the other tools.
+
+    Args:
+        api_key: The Intervals.icu API key (optional, will use API_KEY from .env if not provided)
+    """
+    result = await make_intervals_request(
+        url="/athlete/0/athlete-summary",
+        api_key=api_key,
+    )
+
+    if isinstance(result, dict) and "error" in result:
+        return f"Error listing athletes: {result.get('message')}"
+
+    if not result or not isinstance(result, list):
+        return "No athletes found for this account."
+
+    athletes: dict[str, dict[str, Any]] = {}
+    for item in result:
+        if not isinstance(item, dict):
+            continue
+        athlete_id = item.get("athlete_id") or item.get("id")
+        if not athlete_id:
+            continue
+        name = item.get("athlete_name") or item.get("name") or ""
+        athletes[str(athlete_id)] = {"athlete_id": str(athlete_id), "name": name}
+
+    if not athletes:
+        sample_keys = sorted(result[0].keys()) if isinstance(result[0], dict) else []
+        return f"Could not parse athlete list. Fields returned: {sample_keys}"
+
+    return json.dumps(list(athletes.values()), ensure_ascii=False, separators=(",", ":"))
